@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/cryptspace/config"
+
+# Defaults
+DEVICE=""
+MAPPER_NAME="cryptspace"
+MOUNT_POINT="${HOME}/workspace"
+PASS_ENTRY=""
+
+if [[ -f "${CONFIG_FILE}" ]]; then
+    # shellcheck source=/dev/null
+    source "${CONFIG_FILE}"
+fi
+
+usage() {
+    cat << 'USAGE'
+Usage:
+  cryptspace open   [options]
+  cryptspace close  [options]
+  cryptspace status [options]
+
+Subcommands:
+  open     Unlock LUKS container with pass and mount
+  close    Unmount and close LUKS container safely
+  status   Show current mount and mapper status
+
+Options:
+  -d, --device <path>     Target block device (e.g., /dev/disk/by-id/...)
+  -m, --mount <path>      Mount point path (default: $HOME/workspace)
+  -p, --pass <entry>      pass(1) entry key for password retrieval
+  -n, --name <name>       dm-crypt mapper name (default: cryptspace)
+  -h, --help              Show this help message
+
+Configuration File:
+  $XDG_CONFIG_HOME/cryptspace/config
+USAGE
+    exit 0
+}
+
+if [[ $# -lt 1 ]]; then
+    usage
+fi
+
+SUBCOMMAND="$1"
+shift
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -d|--device) DEVICE="$2"; shift 2 ;;
+        -m|--mount)  MOUNT_POINT="$2"; shift 2 ;;
+        -p|--pass)   PASS_ENTRY="$2"; shift 2 ;;
+        -n|--name)   MAPPER_NAME="$2"; shift 2 ;;
+        -h|--help)   usage ;;
+        *) echo "[-] Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+
+MAPPER_DEV="/dev/mapper/${MAPPER_NAME}"
+
+do_open() {
+    if [[ -z "${DEVICE}" ]]; then
+        echo "[-] Error: Device not specified. Use -d or set DEVICE in config file." >&2
+        exit 1
+    fi
+
+    if [[ ! -e "${DEVICE}" ]]; then
+        echo "[-] Error: Physical device not detected: ${DEVICE}" >&2
+        exit 1
+    fi
+
+    if mountpoint -q "${MOUNT_POINT}"; then
+        echo "[!] Already mounted at ${MOUNT_POINT}"
+        exit 0
+    fi
+
+    if [[ ! -e "${MAPPER_DEV}" ]]; then
+        echo "[*] Unlocking LUKS device: ${DEVICE} -> ${MAPPER_NAME}"
+        if [[ -n "${PASS_ENTRY}" ]]; then
+            pass show "${PASS_ENTRY}" | sudo cryptsetup open "${DEVICE}" "${MAPPER_NAME}"
+        else
+            echo "[*] No pass entry specified. Prompting interactively:"
+            sudo cryptsetup open "${DEVICE}" "${MAPPER_NAME}"
+        fi
+    fi
+
+    mkdir -p "${MOUNT_POINT}"
+    echo "[*] Mounting ${MAPPER_DEV} -> ${MOUNT_POINT}"
+    sudo mount "${MAPPER_DEV}" "${MOUNT_POINT}"
+    echo "[+] Done. Mounted at ${MOUNT_POINT}"
+}
+
+do_close() {
+    if mountpoint -q "${MOUNT_POINT}"; then
+        echo "[*] Unmounting ${MOUNT_POINT}..."
+        if ! sudo umount "${MOUNT_POINT}"; then
+            echo "[-] Umount failed. Processes holding the mount:" >&2
+            sudo lsof +f -- "${MOUNT_POINT}" || true
+            exit 1
+        fi
+    else
+        echo "[!] Mountpoint not mounted: ${MOUNT_POINT}"
+    fi
+
+    if [[ -e "${MAPPER_DEV}" ]]; then
+        echo "[*] Closing LUKS mapper: ${MAPPER_NAME}..."
+        sudo cryptsetup close "${MAPPER_NAME}"
+    else
+        echo "[!] Mapper device does not exist: ${MAPPER_DEV}"
+    fi
+
+    echo "[+] Container securely locked."
+}
+
+do_status() {
+    echo "=== cryptspace status ==="
+    echo "Mapper device : ${MAPPER_DEV}"
+    if [[ -e "${MAPPER_DEV}" ]]; then
+        echo "  Status      : OPEN"
+        sudo cryptsetup status "${MAPPER_NAME}" || true
+    else
+        echo "  Status      : CLOSED"
+    fi
+
+    echo "Mount point   : ${MOUNT_POINT}"
+    if mountpoint -q "${MOUNT_POINT}"; then
+        echo "  Status      : MOUNTED"
+        findmnt "${MOUNT_POINT}" || true
+    else
+        echo "  Status      : UNMOUNTED"
+    fi
+}
+
+case "${SUBCOMMAND}" in
+    open|mount)     do_open ;;
+    close|umount)   do_close ;;
+    status)         do_status ;;
+    *) echo "[-] Unknown subcommand: ${SUBCOMMAND}" >&2; usage ;;
+esac

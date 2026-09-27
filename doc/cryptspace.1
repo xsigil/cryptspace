@@ -1,0 +1,50 @@
+.TH CRYPTSPACE 1 "September 2026" "Version 1.0.0" "User Commands"
+.SH NAME
+cryptspace \- seamless LUKS volume mounter integrated with pass
+.SH SYNOPSIS
+.B cryptspace
+[\fBopen\fR|\fBclose\fR|\fBstatus\fR] [\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B cryptspace
+is a POSIX shell utility designed to securely attach, unlock, mount, and cleanly detach
+LUKS-encrypted external drives or partitions. It integrates with \fBpass\fR(1) for
+automated, keyless unlocking while guarding against accidental dirty unmounts.
+.SH SUBCOMMANDS
+.TP
+.B open
+Unlock target LUKS device and mount it to the specified mount point.
+.TP
+.B close
+Safely unmount filesystem and close dm-crypt mapper container.
+.TP
+.B status
+Inspect status of dm-crypt mapper and current mount point.
+.SH OPTIONS
+.TP
+.BI \-d ", " \-\-device \ path
+Target disk block device or persistent path (e.g. \fI/dev/disk/by-id/...\fR).
+.TP
+.BI \-m ", " \-\-mount \ path
+Filesystem mount point path (default: \fI$HOME/workspace\fR).
+.TP
+.BI \-p ", " \-\-pass \ entry
+Password entry key stored in \fBpass\fR(1).
+.TP
+.BI \-n ", " \-\-name \ name
+dm-crypt device-mapper target name (default: \fIcryptspace\fR).
+.SH CONFIGURATION
+Per-machine configuration can be set in \fI$XDG_CONFIG_HOME/cryptspace/config\fR.
+.SH EXAMPLES
+Unlock and mount using defaults configured in config:
+.IP
+.nf
+cryptspace open
+.fi
+.PP
+Open an ad-hoc partition:
+.IP
+.nf
+cryptspace open -d /dev/disk/by-id/usb-SSD-part1 -m /mnt/vault -p work/luks
+.fi
+.SH AUTHOR
+Crafted for sovereign POSIX environments.
